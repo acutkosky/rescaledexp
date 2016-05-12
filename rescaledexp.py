@@ -21,12 +21,13 @@ class RescaledExpOptimizer(optimizer.Optimizer):
   @@__init__
   """
 
-  def __init__(self, epsilon=1e-8,
+  def __init__(self, learning_rate,epsilon=1e-8,
                use_locking=False, name="RescaledExp"):
     """Construct a new rescaledexp optimizer.
     """
     super(RescaledExpOptimizer, self).__init__(use_locking, name)
     self._epsilon = epsilon
+    self._lr = learning_rate
 
     self._k = np.sqrt(2)
     self._initialized = False
@@ -35,8 +36,6 @@ class RescaledExpOptimizer(optimizer.Optimizer):
     self._epsilon_t = None
 
   def _create_slots(self, var_list):
-    # Create the beta1 and beta2 accumulators on the same device as the first
-    # variable.
     for v in var_list:
         with ops.device(v.device):
             Gsq = constant_op.constant(self._epsilon,shape = v.get_shape())
@@ -44,7 +43,7 @@ class RescaledExpOptimizer(optimizer.Optimizer):
             L = constant_op.constant(self._epsilon,shape = v.get_shape())
             M = constant_op.constant(0.0,shape = v.get_shape())
             center = constant_op.constant(0.0,shape = v.get_shape())
-            initialized = constant_op.constant(0.0,shape = v.get_shape())
+            initialized = constant_op.constant(0)
         self._get_or_make_slot(v,Gsq,"Gsq",self._name)
         self._get_or_make_slot(v,Gsum,"Gsum",self._name)
         self._get_or_make_slot(v,L,"L",self._name)
@@ -63,14 +62,14 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       M = self.get_slot(var,"M")
       center = self.get_slot(var,"center")
       initialized = self.get_slot(var,"initialized")
-
+      lr = self._lr
 
 
       epsilon_vector = constant_op.constant(self._epsilon,shape=var.get_shape())
       zero_vector = constant_op.constant(0.0,shape=var.get_shape())
 
 
-      center_t = tf.select(tf.equal(initialized,zero_vector),var,center)
+      center_t = tf.cond(tf.equal(initialized,0),lambda: var,lambda: center)
       resets = tf.abs(grad)>2*L
 
       k = self._k
@@ -82,7 +81,7 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       Gsum_t =Gsum+grad
       M_t = tf.maximum(M,tf.abs(Gsum_t)*L-Gsq_t)
 
-      eta = 1.0/(k*tf.sqrt(2*(M_t+Gsq_t)))
+      eta = lr*1.0/(k*tf.sqrt(2*(M_t+Gsq_t)))
 
       w_t = -tf.sign(Gsum_t)*(tf.exp(eta*tf.abs(Gsum_t))-1)
 
@@ -93,9 +92,10 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       L_update = state_ops.assign(L,tf.select(resets,tf.abs(grad),L))
       var_update = state_ops.assign(var,tf.select(resets,
           zero_vector,w_t)+center_t)
+      #var_update =state_ops.assign(var,center_t)
       center_update = state_ops.assign(center,center_t)
       initialized_update = \
-      state_ops.assign(initialized,constant_op.constant(1.0,shape=var.get_shape()))
+      state_ops.assign(initialized,constant_op.constant(1))
 
       return control_flow_ops.group(*[var_update,Gsq_update,Gsum_update,
                                         L_update,M_update,center_update,
