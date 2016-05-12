@@ -44,11 +44,13 @@ class RescaledExpOptimizer(optimizer.Optimizer):
             L = constant_op.constant(self._epsilon,shape = v.get_shape())
             M = constant_op.constant(0.0,shape = v.get_shape())
             center = constant_op.constant(0.0,shape = v.get_shape())
+            initialized = constant_op.constant(0.0,shape = v.get_shape())
         self._get_or_make_slot(v,Gsq,"Gsq",self._name)
         self._get_or_make_slot(v,Gsum,"Gsum",self._name)
         self._get_or_make_slot(v,L,"L",self._name)
         self._get_or_make_slot(v,Gsq,"M",self._name)
         self._get_or_make_slot(v,center,"center",self._name)
+        self._get_or_make_slot(v,initialized,"initialized",self._name)
 
   def _prepare(self):
     self._epsilon_t = ops.convert_to_tensor(self._epsilon, name="epsilon")
@@ -60,6 +62,7 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       Gsum = self.get_slot(var,"Gsum")
       M = self.get_slot(var,"M")
       center = self.get_slot(var,"center")
+      initialized = self.get_slot(var,"initialized")
 
 
 
@@ -67,7 +70,7 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       zero_vector = constant_op.constant(0.0,shape=var.get_shape())
 
 
-      center_t = tf.select(tf.equal(center,zero_vector),var,center)
+      center_t = tf.select(tf.equal(initialized,zero_vector),var,center)
       resets = tf.abs(grad)>2*L
 
       k = self._k
@@ -90,11 +93,13 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       L_update = state_ops.assign(L,tf.select(resets,tf.abs(grad),L))
       var_update = state_ops.assign(var,tf.select(resets,
           zero_vector,w_t)+center_t)
-
       center_update = state_ops.assign(center,center_t)
+      initialized_update = \
+      state_ops.assign(initialized,constant_op.constant(1.0,shape=var.get_shape()))
 
       return control_flow_ops.group(*[var_update,Gsq_update,Gsum_update,
-                                        L_update,M_update,center_update])
+                                        L_update,M_update,center_update,
+                                        initialized_update])
 
 
 
