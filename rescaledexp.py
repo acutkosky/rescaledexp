@@ -182,6 +182,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
     grads_and_vars = tuple(grads_and_vars)  # Make sure repeat iteration works
     Gsum_sq = 0
     Gsq_sum = 0
+    grad_norm_sq = 0
     for g, v in grads_and_vars:
       if not isinstance(g, (ops.Tensor, ops.IndexedSlices, type(None))):
         raise TypeError(
@@ -204,10 +205,13 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
       old_Gsum = self.get_slot("Gsum",var)
       Gsum_sq += 2*tf.nn.l2_loss(old_Gsum+grad)
 
+      grad_norm_sq += 2*tf.nn.l2_loss(grad)
+
       old_Gsq_sum = self.get_slot("Gsq",var)
       Gsq_sum += old_Gsq_sum+2*tf.nn.l2_loss(grad)
     self._Gsum_sq = Gsum_sq
     self._Gsq_sum = Gsq_sum
+    self._grad_norm_sq = grad_norm_sq
 
     update_ops = []
     with ops.op_scope([], name, self._name) as name:
@@ -241,7 +245,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
 
       Gsum_sq = self._Gsum_sq
       Gsq_sum = self._Gsq_sum
-
+      grad_norm_sq = self._grad_norm_sq
       lr = self._lr
 
 
@@ -251,7 +255,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
       zero_vector = constant_op.constant(0.0,shape=var.get_shape())
 
 
-      grad_norm_sq = tf.nn.l2_loss(grad)*2
+      #grad_norm_sq = tf.nn.l2_loss(grad)*2
 
       center_t = tf.cond(tf.equal(initialized,0),lambda: var,lambda: center)
       resets = grad_norm_sq>2* L**2
