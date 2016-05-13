@@ -40,16 +40,18 @@ class RescaledExpOptimizer(optimizer.Optimizer):
         with ops.device(v.device):
             Gsq = constant_op.constant(self._epsilon,shape = v.get_shape())
             Gsum = constant_op.constant(0.0,shape = v.get_shape())
-            L = constant_op.constant(self._epsilon,shape = v.get_shape())
+            L = constant_op.constant(0.0,shape = v.get_shape())
             M = constant_op.constant(0.0,shape = v.get_shape())
             center = constant_op.constant(0.0,shape = v.get_shape())
             initialized = constant_op.constant(0)
+            old_var = constant_op.constant(0.0,shape=v.get_shape())
         self._get_or_make_slot(v,Gsq,"Gsq",self._name)
         self._get_or_make_slot(v,Gsum,"Gsum",self._name)
         self._get_or_make_slot(v,L,"L",self._name)
         self._get_or_make_slot(v,Gsq,"M",self._name)
         self._get_or_make_slot(v,center,"center",self._name)
         self._get_or_make_slot(v,initialized,"initialized",self._name)
+        self._get_or_make_slot(v,old_var,"old_var",self._name)
 
   def _prepare(self):
     self._epsilon_t = ops.convert_to_tensor(self._epsilon, name="epsilon")
@@ -62,6 +64,7 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       M = self.get_slot(var,"M")
       center = self.get_slot(var,"center")
       initialized = self.get_slot(var,"initialized")
+      old_var = self.get_slot(var,"old_var")
       lr = self._lr
 
 
@@ -69,8 +72,10 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       zero_vector = constant_op.constant(0.0,shape=var.get_shape())
 
 
-      center_t = tf.cond(tf.equal(initialized,0),lambda: var,lambda: center)
       resets = tf.abs(grad)>2*L
+      center_t_reset = tf.select(resets,old_var,center)
+      center_t = tf.cond(tf.equal(initialized,0),lambda: var,lambda:\
+              center_t_reset)
 
       k = self._k
 
@@ -96,10 +101,12 @@ class RescaledExpOptimizer(optimizer.Optimizer):
       center_update = state_ops.assign(center,center_t)
       initialized_update = \
       state_ops.assign(initialized,constant_op.constant(1))
+      old_var_update = state_ops.assign(old_var,var)
 
       return control_flow_ops.group(*[var_update,Gsq_update,Gsum_update,
                                         L_update,M_update,center_update,
-                                        initialized_update])
+                                        initialized_update,
+                                        old_var_update])
 
 
 
@@ -131,17 +138,19 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
 
     # Tensor versions of the constructor arguments, created in _prepare().
     self._epsilon_t = None
+    sefl._L = 0.0
 
   def _create_slots(self, var_list):
     for v in var_list:
         with ops.device(v.device):
             Gsq = constant_op.constant(self._epsilon)
             Gsum = constant_op.constant(0.0,shape = v.get_shape())
-            L = constant_op.constant(self._epsilon)
+            L = constant_op.constant(0.0)
             M = constant_op.constant(0.0)
             center = constant_op.constant(0.0,shape = v.get_shape())
             initialized = constant_op.constant(0)
-            step_accum = constant_op_constant(self._epsilon)
+            step_accum = constant_op.constant(self._epsilon)
+            old_var = constant_op.constant(0.0,shape=v.get_shape())
         self._get_or_make_slot(v,Gsq,"Gsq",self._name)
         self._get_or_make_slot(v,Gsum,"Gsum",self._name)
         self._get_or_make_slot(v,L,"L",self._name)
@@ -149,6 +158,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
         self._get_or_make_slot(v,center,"center",self._name)
         self._get_or_make_slot(v,initialized,"initialized",self._name)
         self._get_or_make_slot(v,step_accum,"step_accum",self._name)
+        self._get_or_make_slot(v,old_var,"old_var",self._name)
 
   def _prepare(self):
     self._epsilon_t = ops.convert_to_tensor(self._epsilon, name="epsilon")
@@ -180,9 +190,9 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
     # by most optimizers.  It relies on the subclass implementing the following
     # methods: _create_slots(), _prepare(), _apply_dense(), and _apply_sparse().
     grads_and_vars = tuple(grads_and_vars)  # Make sure repeat iteration works
-    Gsum_sq = 0
-    Gsq_sum = 0
-    grad_norm_sq = 0
+    Gsum_sq = constant_op.constant(0.0)
+    Gsq_sum = constant_op.constant(0.0)
+    grad_norm_sq = constant_op.constant(0.0)
     for g, v in grads_and_vars:
       if not isinstance(g, (ops.Tensor, ops.IndexedSlices, type(None))):
         raise TypeError(
@@ -202,16 +212,20 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
 
     #update accumulators
     for grad,var in grads_and_vars:
-      old_Gsum = self.get_slot("Gsum",var)
+      if grad is None:
+          continue
+      old_Gsum = self.get_slot(var,"Gsum")
       Gsum_sq += 2*tf.nn.l2_loss(old_Gsum+grad)
 
       grad_norm_sq += 2*tf.nn.l2_loss(grad)
 
-      old_Gsq_sum = self.get_slot("Gsq",var)
+      old_Gsq_sum = self.get_slot(var,"Gsq")
       Gsq_sum += old_Gsq_sum+2*tf.nn.l2_loss(grad)
     self._Gsum_sq = Gsum_sq
     self._Gsq_sum = Gsq_sum
     self._grad_norm_sq = grad_norm_sq
+    self._L = \
+    tf.cond(tf.sqrt(grad_norm_sq)>2*self._L,tf.sqrt(grad_norm_sq),self._L)
 
     update_ops = []
     with ops.op_scope([], name, self._name) as name:
@@ -221,7 +235,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
           continue
         # We colocate all ops created in _apply_dense or _apply_sparse
         # on the same device as the variable.
-        with ops.name_scope("update_" + var.op.name), ops.colocate_with(var):
+        with ops.name_scope("update_" + var.op.name), ops.device(var.device):
           if isinstance(grad, ops.Tensor):
             update_ops.append(self._apply_dense(grad, var))
           else:
@@ -230,18 +244,19 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
         return self._finish(update_ops, name)
       else:
         with ops.control_dependencies([self._finish(update_ops, "update")]):
-          with ops.colocate_with(global_step):
-            return state_ops.assign_add(global_step, 1, name=name).op
+            with ops.device(global_step.device):#ops.colocate_with(global_step):
+                return state_ops.assign_add(global_step, 1, name=name).op
 
   def _apply_dense(self, grad, var):
 
       L = self.get_slot(var,"L")
       Gsq = self.get_slot(var,"Gsq")
       Gsum = self.get_slot(var,"Gsum")
-      #M = self.get_slot(var,"M")
+      M = self.get_slot(var,"M")
       center = self.get_slot(var,"center")
       initialized = self.get_slot(var,"initialized")
       step_accum = self.get_slot(var,"step_accum")
+      old_var = self.get_slot(var,"old_var")
 
       Gsum_sq = self._Gsum_sq
       Gsq_sum = self._Gsq_sum
@@ -257,8 +272,10 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
 
       #grad_norm_sq = tf.nn.l2_loss(grad)*2
 
-      center_t = tf.cond(tf.equal(initialized,0),lambda: var,lambda: center)
       resets = grad_norm_sq>2* L**2
+      center_t_resets = tf.cond(resets,lambda: old_var,lambda:center)
+      center_t = tf.cond(tf.equal(initialized,0),lambda: var,lambda:\
+              center_t_resets)
 
       k = self._k
 
@@ -272,9 +289,9 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
       #Gsum_t_norm = tf.sqrt(tf.nn.l2_loss(Gsum_t)*2)
 
       Gsum_t_normalized = Gsum_t/tf.maximum(Gsum_t_norm,epsilon_t)
-      #M_t = tf.maximum(M,Gsum_t_norm*L-Gsq_t)
+      M_t = tf.maximum(M,Gsum_t_norm*L-Gsq_t)
 
-      step_accum_t = tf.minimum(L*Gsum_t_norm,step_accum_t+Gsq_sum)
+      step_accum_t = tf.minimum(L*Gsum_t_norm,step_accum+Gsq_sum)
 
       #eta = lr*1.0/(k*tf.sqrt(2*(M_t+Gsq_t)))
       eta = lr*1.0/(k*tf.sqrt(2*step_accum_t))
@@ -299,10 +316,12 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
       state_ops.assign(initialized,constant_op.constant(1))
       step_accum_update = state_ops.assign(step_accum,tf.cond(resets,
           lambda:epsilon_t,lambda:step_accum_t))
+      old_var_update = state_ops.assign(old_var,var)
 
       return control_flow_ops.group(*[var_update,Gsq_update,Gsum_update,
                                         L_update,M_update,center_update,
-                                        initialized_update,step_accum_update])
+                                        initialized_update,step_accum_update,
+                                        old_var_update])
 
 
 
