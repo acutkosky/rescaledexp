@@ -138,7 +138,8 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
 
     # Tensor versions of the constructor arguments, created in _prepare().
     self._epsilon_t = None
-    sefl._L = 0.0
+    self._L = tf.Variable(0.0)
+    self._step_count = tf.Variable(1.0)
 
   def _create_slots(self, var_list):
     for v in var_list:
@@ -151,6 +152,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
             initialized = constant_op.constant(0)
             step_accum = constant_op.constant(self._epsilon)
             old_var = constant_op.constant(0.0,shape=v.get_shape())
+            step_count = constant_op.constant(1.0)
         self._get_or_make_slot(v,Gsq,"Gsq",self._name)
         self._get_or_make_slot(v,Gsum,"Gsum",self._name)
         self._get_or_make_slot(v,L,"L",self._name)
@@ -159,6 +161,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
         self._get_or_make_slot(v,initialized,"initialized",self._name)
         self._get_or_make_slot(v,step_accum,"step_accum",self._name)
         self._get_or_make_slot(v,old_var,"old_var",self._name)
+        self._get_or_make_slot(v,step_count,"step_count",self._name)
 
   def _prepare(self):
     self._epsilon_t = ops.convert_to_tensor(self._epsilon, name="epsilon")
@@ -224,10 +227,22 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
     self._Gsum_sq = Gsum_sq
     self._Gsq_sum = Gsq_sum
     self._grad_norm_sq = grad_norm_sq
-    self._L = \
-    tf.cond(tf.sqrt(grad_norm_sq)>2*self._L,tf.sqrt(grad_norm_sq),self._L)
+    step_count = self._step_count
+    reset_L = tf.sqrt(grad_norm_sq)>2*self._L
+#tf.logical_or(tf.sqrt(Gsq_sum/step_count)>2*self._L,
+#                tf.sqrt(Gsq_sum/step_count)<0.5*self._L)
 
-    update_ops = []
+    update_L = state_ops.assign(self._L,tf.cond(reset_L,
+                    lambda:tf.sqrt(grad_norm_sq),lambda:self._L))
+    update_step_count = state_ops.assign(step_count,
+            tf.cond(reset_L,lambda: constant_op.constant(1.0),lambda: step_count+1))
+
+
+    tf.scalar_summary("rescaled exp: L",self._L)
+    tf.scalar_summary("rescaled exp: RMS Gradient",tf.sqrt(Gsq_sum/step_count))
+    tf.scalar_summary("rescaled exp: Gradient norm",tf.sqrt(grad_norm_sq))
+    tf.scalar_summary("rescaled exp: step count",step_count)
+    update_ops = [update_L,update_step_count]
     with ops.op_scope([], name, self._name) as name:
       self._prepare()
       for grad, var in grads_and_vars:
@@ -235,7 +250,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
           continue
         # We colocate all ops created in _apply_dense or _apply_sparse
         # on the same device as the variable.
-        with ops.name_scope("update_" + var.op.name), ops.device(var.device):
+        with ops.name_scope("update_" + var.op.name), ops.colocate_with(var):#device(var.device):
           if isinstance(grad, ops.Tensor):
             update_ops.append(self._apply_dense(grad, var))
           else:
@@ -244,7 +259,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
         return self._finish(update_ops, name)
       else:
         with ops.control_dependencies([self._finish(update_ops, "update")]):
-            with ops.device(global_step.device):#ops.colocate_with(global_step):
+            with ops.colocate_with(global_step):
                 return state_ops.assign_add(global_step, 1, name=name).op
 
   def _apply_dense(self, grad, var):
@@ -257,6 +272,7 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
       initialized = self.get_slot(var,"initialized")
       step_accum = self.get_slot(var,"step_accum")
       old_var = self.get_slot(var,"old_var")
+      step_count = self.get_slot(var,"step_count")
 
       Gsum_sq = self._Gsum_sq
       Gsq_sum = self._Gsq_sum
@@ -272,7 +288,10 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
 
       #grad_norm_sq = tf.nn.l2_loss(grad)*2
 
-      resets = grad_norm_sq>2* L**2
+      resets = tf.sqrt(grad_norm_sq)>2*L
+#tf.logical_or(tf.sqrt(Gsq_sum/step_count)>2* \
+#              L,tf.sqrt(Gsq_sum/step_count)<0.5*L)
+      #reset_L=tf.logical_or(resets,grad_norm_sq<0.5*L**2)
       center_t_resets = tf.cond(resets,lambda: old_var,lambda:center)
       center_t = tf.cond(tf.equal(initialized,0),lambda: var,lambda:\
               center_t_resets)
@@ -317,11 +336,13 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
       step_accum_update = state_ops.assign(step_accum,tf.cond(resets,
           lambda:epsilon_t,lambda:step_accum_t))
       old_var_update = state_ops.assign(old_var,var)
+      step_count_update = state_ops.assign(step_count,tf.cond(resets,
+          lambda:constant_op.constant(1.0),lambda:step_count+1))
 
       return control_flow_ops.group(*[var_update,Gsq_update,Gsum_update,
                                         L_update,M_update,center_update,
                                         initialized_update,step_accum_update,
-                                        old_var_update])
+                                        old_var_update,step_count_update])
 
 
 
