@@ -21,9 +21,12 @@ class RescaledExpOptimizer(optimizer.Optimizer):
   @@__init__
   """
 
-  def __init__(self, learning_rate,epsilon=1e-8,
+  def __init__(self, learning_rate=1.0,epsilon=1e-8,
                use_locking=False, name="RescaledExp"):
     """Construct a new rescaledexp optimizer.
+        learning_rate = scale factor to apply to FTRL regularization function.
+        Default value of 1.0 achieves provably low regret in unconstrained
+        problems.
     """
     super(RescaledExpOptimizer, self).__init__(use_locking, name)
     self._epsilon = epsilon
@@ -125,9 +128,12 @@ class RescaledExpSphereOptimizer(optimizer.Optimizer):
   @@__init__
   """
 
-  def __init__(self, learning_rate,epsilon=1e-8,
+  def __init__(self, learning_rate=1.0,epsilon=1e-8,
                use_locking=False, name="RescaledExp"):
     """Construct a new rescaledexp optimizer.
+        learning_rate = scale factor to apply to FTRL regularization function.
+        Default value of 1.0 achieves provably low regret in unconstrained
+        problems.
     """
     super(RescaledExpSphereOptimizer, self).__init__(use_locking, name)
     self._epsilon = epsilon
