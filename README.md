@@ -1,6 +1,6 @@
 # README #
 
-RescaledExp implementation in tensorflow. RescaledExp is an first-order online convex optimization algorithm that achieves optimal regret in unconstrained problems without knowing a prior bound on gradients.
+RescaledExp implementation in tensorflow (https://www.tensorflow.org/). RescaledExp is an first-order online convex optimization algorithm that achieves optimal regret in unconstrained problems without knowing a prior bound on gradients.
 
 RescaledExpOptimizer is a coordinate-wise optimizer class.
 RescaledExpSphereOptimizer is an optimizer with dimension-free regret bounds.
@@ -12,4 +12,4 @@ Include the python file
 
 Then when instantiating an optimizer class (e.g. in place of `tf.GradientDescentOptimizer`), use `tensorexp.RescaledExpOptimizer` or `tensorexp.RescaledExpSphereOptimizer`.
 
-Each optimizer class takes arguments `learning_rate` and `epsilon`. It should be safe to leave both of these as their default values in all cases. `learning_rate` will only affect some constants in the regret analysis (in contrast to learning rates in most algorithms) and `epsilon` is a small constant used for numerical reasons in place of zero to in expressions that evaluate to 0/0.
+Each optimizer class takes arguments `learning_rate` and `epsilon`. It should ideally be effective to leave both of these as their default values in all cases (if you are optimizing `learning_rate`, then the algorithm isn't working as desired). `epsilon` is a small constant used for numerical reasons in place of zero in expressions that evaluate to 0/0.
