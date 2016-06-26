@@ -10,4 +10,6 @@ RescaledExpSphere appears to work better on a couple tested neural network probl
 Include the python file
 `import tensorexp`
 
-Then when instantiating an optimizer class (see e.g. in place of `tf.GradientDescentOptimizer`), use `tensorexp.RescaledExpOptimizer` or `tensorexp.RescaledExpSphereOptimizer`.
+Then when instantiating an optimizer class (e.g. in place of `tf.GradientDescentOptimizer`), use `tensorexp.RescaledExpOptimizer` or `tensorexp.RescaledExpSphereOptimizer`.
+
+Each optimizer class takes arguments `learning_rate` and `epsilon`. It should be safe to leave both of these as their default values in all cases. `learning_rate` will only affect some constants in the regret analysis (in contrast to learning rates in most algorithms) and `epsilon` is a small constant used for numerical reasons in place of zero to in expressions that evaluate to 0/0.
